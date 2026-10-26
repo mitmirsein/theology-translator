@@ -52,15 +52,30 @@ def volume_ratio(source: str, draft: str, cjk_factor: float = 2.0) -> tuple[floa
 def audit(source: str, draft: str, glossary: dict, min_ratio: float) -> dict:
     checks = []
 
-    # 1. ¶ 마커 정합
-    markers = [int(m) for m in MARKER_RE.findall(draft)]
-    if not markers:
+    # 1. ¶ 마커 정합 및 동수 검증 (Parity Check)
+    src_markers = [int(m) for m in MARKER_RE.findall(source)]
+    drf_markers = [int(m) for m in MARKER_RE.findall(draft)]
+
+    if not drf_markers:
         checks.append(("paragraph_markers", False, "번역문에 [¶N] 마커가 없음 (Drafter 규칙 위반)"))
+    elif src_markers:
+        dups = sorted({m for m in drf_markers if drf_markers.count(m) > 1})
+        missing = sorted(set(src_markers) - set(drf_markers))
+        extra = sorted(set(drf_markers) - set(src_markers))
+        parity_ok = (len(src_markers) == len(drf_markers)) and not missing and not extra and not dups
+        detail = f"원문 {len(src_markers)}개 ↔ 번역 {len(drf_markers)}개"
+        if dups:
+            detail += f"; 번역 중복 {dups[:5]}"
+        if missing:
+            detail += f"; 번역 누락 {missing[:5]}"
+        if extra:
+            detail += f"; 번역 초과 {extra[:5]}"
+        checks.append(("paragraph_markers", parity_ok, detail))
     else:
-        dups = sorted({m for m in markers if markers.count(m) > 1})
-        missing = sorted(set(range(min(markers), max(markers) + 1)) - set(markers))
+        dups = sorted({m for m in drf_markers if drf_markers.count(m) > 1})
+        missing = sorted(set(range(min(drf_markers), max(drf_markers) + 1)) - set(drf_markers))
         ok = not dups and not missing
-        detail = f"마커 {len(markers)}개 (¶{min(markers)}–¶{max(markers)})"
+        detail = f"번역 마커 {len(drf_markers)}개 (¶{min(drf_markers)}–¶{max(drf_markers)}) [원문 마커 없음]"
         if dups:
             detail += f"; 중복 {dups[:5]}"
         if missing:
@@ -68,7 +83,9 @@ def audit(source: str, draft: str, glossary: dict, min_ratio: float) -> dict:
         checks.append(("paragraph_markers", ok, detail))
 
     # 2. Token Ratio Guard (문자체계 인지형 정보량 비율)
-    ratio, basis = volume_ratio(source, MARKER_RE.sub("", draft))
+    clean_src = MARKER_RE.sub("", source)
+    clean_drf = MARKER_RE.sub("", draft)
+    ratio, basis = volume_ratio(clean_src, clean_drf)
     checks.append(("token_ratio", ratio >= min_ratio,
                    f"비율 {ratio:.2f} ({basis}, 기준 ≥ {min_ratio})"))
 
